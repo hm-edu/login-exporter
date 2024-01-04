@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	"net/http"
+	"strconv"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"net/http"
+	log "github.com/sirupsen/logrus"
 )
 
 func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) {
@@ -13,11 +15,11 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 	// Logs all the connections
 	logger.WithFields(
 		log.Fields{
-			"subsytem": "probe_handler",
-			"part":     "connection_info",
-			"user_address":       r.RemoteAddr,
-			"server_host":     r.Host,
-			"user_agent":    r.UserAgent(),
+			"subsytem":     "probe_handler",
+			"part":         "connection_info",
+			"user_address": r.RemoteAddr,
+			"server_host":  r.Host,
+			"user_agent":   r.UserAgent(),
 		}).Info("This connection was established")
 
 	var loginType = ""
@@ -29,6 +31,8 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 				"subsystem": "probe_handler",
 				"part":      "target_check",
 			}).Error("The target is not given")
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 	// Find the target in the configuration
 	targetConfig, err := findTargetInConfig(configs, target)
@@ -38,6 +42,8 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 				"subsystem": "probe_handler",
 				"part":      "target_config_check",
 			}).Error("The given target does not have configuration")
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	} else {
 		loginType = targetConfig.LoginType
 	}
@@ -53,7 +59,9 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 			Help: "Shows the status of the given target 0 for failure 1 for success"},
 		[]string{"target", "login_type"})
 	var elapsedMetric = prometheus.NewGauge(
-		prometheus.GaugeOpts{Name: "login_elapsed_seconds", Help: "Shows how long it took the get the data in seconds"})
+		prometheus.GaugeOpts{Name: "login_elapsed_seconds",
+			Help: "Shows how long it took the get the data in seconds",
+		})
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(statusMetric)
 	registry.MustRegister(elapsedMetric)
@@ -63,7 +71,7 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 	h.ServeHTTP(w, r)
 }
 
-/// findTargetInConfig Finds the given target in login configs
+// / findTargetInConfig Finds the given target in login configs
 func findTargetInConfig(configs LoginConfigs, target string) (SingleLoginConfig, error) {
 	for _, config := range configs.Configs {
 		if config.Target == target {
@@ -85,7 +93,7 @@ func main() {
 		log.Fields{
 			"subsystem": "main",
 			"part":      "port_setting",
-		}).Info("Started Listening on " + fmt.Sprintf("%s", listenIp) + ":" + fmt.Sprintf("%v", listenPort))
+		}).Info("Started Listening on " + listenIp + ":" + strconv.Itoa(listenPort))
 
-	logger.Fatal(http.ListenAndServe(fmt.Sprintf("%s", listenIp)+":"+fmt.Sprintf("%v", listenPort), nil))
+	logger.Fatal(http.ListenAndServe(listenIp+":"+strconv.Itoa(listenPort), nil))
 }

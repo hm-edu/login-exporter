@@ -1,31 +1,27 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"flag"
 	"io/ioutil"
-	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
-
-	"github.com/sclevine/agouti"
+	"github.com/chromedp/chromedp"
+	log "github.com/sirupsen/logrus"
 
 	"gopkg.in/yaml.v2"
 )
 
-/// LoginConfigs Is the list of configuration
-/// That should be read
+// LoginConfigs Is the list of configuration
+// That should be read
 type LoginConfigs struct {
 	Configs []SingleLoginConfig `yaml:"targets"`
 }
 
-/// SingleLoginConfig Is the login configuration settings
-/// that is used to read the yaml files.
+// SingleLoginConfig Is the login configuration settings
+// that is used to read the yaml files.
 type SingleLoginConfig struct {
 	Url               string `yaml:"url"`
 	Target            string `yaml:"target"`
@@ -47,54 +43,11 @@ type SingleLoginConfig struct {
 	LogoutXpath       string `yaml:"logout_xpath"`
 	LogoutSubmitType  string `yaml:"logout_submit_type"`
 	LogoutFrame       string `yaml:"logout_frame"`
+	LogoutUrl         string `yaml:"logout_url"`
 	WaitTime          int    `yaml:"wait_time"`
 }
 
-/// getChromeOptions Returns the options for the chrome driver that is used
-/// to fetch the data from the server
-func getChromeOptions() agouti.Option {
-	return agouti.ChromeOptions("args", []string{
-		"--headless",
-		"--disable-gpu",
-		"--no-first-run",
-		"--no-default-browser-check",
-		"--allow-insecure-localhost",
-	})
-}
-
-/// getChromeExcludedOptions Returns the excluded options
-func getChromeExcludedOptions() agouti.Option {
-	return agouti.ChromeOptions("excludeSwitches", []string{
-		"ignore-certificate-errors",
-	})
-}
-
-///startDriver Starts the given driver on the machine
-func startDriver() *agouti.WebDriver {
-	driver := agouti.ChromeDriver(getChromeOptions(), getChromeExcludedOptions(), agouti.RejectInvalidSSL)
-	if err := driver.Start(); err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "driver",
-				"part":      "creation",
-			}).Panicln(err.Error())
-	}
-	return driver
-}
-
-/// stopDriver Stops the given driver running. This
-func stopDriver(driver *agouti.WebDriver) {
-	err := driver.Stop()
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "driver",
-				"part":      "destruction",
-			}).Panicln(err.Error())
-	}
-}
-
-/// readConfig Reads the yaml configuration from the given server
+// readConfig Reads the yaml configuration from the given server
 func readConfig(path string) LoginConfigs {
 	var loginConfigs LoginConfigs
 	yamlFile, err := ioutil.ReadFile(path)
@@ -130,7 +83,7 @@ var timeout int
 
 var logger = log.New()
 
-/// getCommandLineOptions Returns the command options from the terminal
+// getCommandLineOptions Returns the command options from the terminal
 func getCommandLineOptions() {
 	flag.StringVar(&configFilePath, "config", "/etc/prometheus/login.yml", "Configuration file path")
 	flag.StringVar(&listenIp, "listen_ip", "127.0.0.1", "Listen IP Address")
@@ -144,7 +97,7 @@ func getCommandLineOptions() {
 	flag.Parse()
 }
 
-/// getLogger Returns the logger that is used to log the data
+// getLogger Returns the logger that is used to log the data
 func getLogger() *log.Logger {
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0660)
 	if err != nil {
@@ -160,385 +113,72 @@ func getLogger() *log.Logger {
 	return logger
 }
 
-/// loginSimpleForm Logs in the simple for using the username, password and the submit button
-func loginSimpleForm(page *agouti.Page, urlText string, usernameXpath string, passwordXpath string, submitXpath string,
-	username string, password string, submitType string, wait int) {
-	err := page.Navigate(urlText)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "driver",
-				"part":      "navigation_error",
-			}).Warningln(err.Error())
-	}
-	err = page.SetImplicitWait(wait * 1000)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_simple_form",
-				"part":      "waiting",
-			}).Warningln(err.Error())
-	}
-	usernameField := page.FindByXPath(usernameXpath)
-	err = usernameField.SendKeys(username)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_simple_form",
-				"part":      "username_field",
-			}).Warningln(err.Error())
-	}
-	passwordField := page.FindByXPath(passwordXpath)
-	err = passwordField.SendKeys(password)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_simple_form",
-				"part":      "password_field",
-			}).Warningln(err.Error())
-	}
-	submitField := page.FindByXPath(submitXpath)
-	if submitType == "click" {
-		err = submitField.Click()
-	} else {
-		err = submitField.Submit()
-	}
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_simple_form",
-				"part":      "submit_field",
-			}).Warningln(err.Error())
-	}
-}
-
-/// loginShibboleth Logs in the shibboleth system using the given username and password
-func loginShibboleth(page *agouti.Page, urlText string, username string, password string, usernameXpath string,
-	passwordXpath string, submitXpath string, submitType string) {
-	err := page.Navigate(urlText)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "driver",
-				"part":      "navigation_error",
-			}).Warningln(err.Error())
-	}
+// loginShibboleth Logs in the shibboleth system using the given username and password
+func loginShibboleth(urlText string, username string, password string, usernameXpath string,
+	passwordXpath string, submitXpath string, logoutUrl string, text *string) []chromedp.Action {
+	actions := []chromedp.Action{}
 	if usernameXpath == "" && passwordXpath == "" && submitXpath == "" {
 		usernameXpath = "//input[@id='username']"
 		passwordXpath = "//input[@id='password']"
 		submitXpath = "//button[@class='aai_login_button']"
 	}
-	usernameField := page.FindByXPath(usernameXpath)
-	err = usernameField.SendKeys(username)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_shibboleth",
-				"part":      "username_field",
-			}).Warningln(err.Error())
-	}
-	passwordField := page.FindByXPath(passwordXpath)
-	err = passwordField.SendKeys(password)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_shibboleth",
-				"part":      "password_field",
-			}).Warningln(err.Error())
-	}
-	if submitType == "" {
-		submitType = "click"
-	}
-	submitField := page.FindByXPath(submitXpath)
-	if submitType == "click" {
-		err = submitField.Click()
-	} else {
-		err = submitField.Submit()
-	}
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_shibboleth",
-				"part":      "submit_field",
-			}).Warningln(err.Error())
-	}
+	actions = append(actions,
+		chromedp.WaitVisible(usernameXpath), chromedp.SendKeys(usernameXpath, username), chromedp.SendKeys(passwordXpath, password),
+		chromedp.Click(submitXpath), chromedp.WaitVisible("//pre"), chromedp.Text("body", text), chromedp.Navigate(logoutUrl))
+	return actions
 }
 
-/// loginApi Logs in the given API system with the given parameter for username/password and the method for the call
-func loginApi(urlText string, usernameXpath string, passwordXpath string, username string,
-	password string, method string) *http.Response {
-	data := map[string]string{}
-	if usernameXpath != "" {
-		data[usernameXpath] = username
-	}
-	if passwordXpath != "" {
-		data[passwordXpath] = password
-	}
-	jsonValue, err := json.Marshal(data)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_api",
-				"part":      "json_marshal",
-			}).Warningln(err.Error())
-	}
-	req, err := http.NewRequest(method, urlText, bytes.NewBuffer(jsonValue))
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_api",
-				"part":      "http_request_new",
-			}).Warningln(err.Error())
-	} else {
-		req.Header.Set("Content-Type", "application/json")
-		client := &http.Client{
-			Timeout: time.Duration(timeout) * time.Second,
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			logger.WithFields(
-				log.Fields{
-					"subsystem": "login_api",
-					"part":      "http_request_do",
-				}).Warningln(err.Error())
-		} else {
-			defer resp.Body.Close()
-		}
-		return resp
-	}
-	return nil
-}
-
-/// loginBasicAuth Logs in the given HTTPAuth page with the username and password given
-func loginBasicAuth(page *agouti.Page, urlText string, username string, password string) {
-	u, err := url.Parse(urlText)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_basic_auth",
-				"part":      "url_parser",
-			}).Warningln(err.Error())
-	} else {
-		urlText = u.Scheme + "://" + username + ":" + password + "@" + u.Hostname() + u.Path + "?" + u.RawQuery
-	}
-	err = page.Navigate(urlText)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "driver",
-				"part":      "navigation_error",
-			}).Warningln(err.Error())
-	}
-}
-
-// logOut Logs out of the given page using the xpath that is given for the logout.
-func logOut(page *agouti.Page, logoutXpath string, submitType string, framePath string) {
-	if framePath != "" {
-		selectFrame(framePath, page)
-	}
-	logoutField := page.FindByXPath(logoutXpath)
-	if submitType == "click" {
-		err := logoutField.Click()
-		if err != nil {
-			logger.WithFields(
-				log.Fields{
-					"subsystem": "logout",
-					"part":      "click",
-				}).Warningln(err.Error())
-		}
-	} else {
-		err := logoutField.Submit()
-		if err != nil {
-			logger.WithFields(
-				log.Fields{
-					"subsystem": "logout",
-					"part":      "submit",
-				}).Warningln(err.Error())
-		}
-	}
-	if framePath != "" {
-		switchToRootFrame(page)
-	}
-}
-
-/// loginPasswordOnly Logs in the given website with only password and the xpath to find the field
-func loginPasswordOnly(page *agouti.Page, urlText string, passwordXPath string, submitXpath string, password string,
-	submitType string) {
-	err := page.Navigate(urlText)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "driver",
-				"part":      "navigation_error",
-			}).Warningln(err.Error())
-	}
-	passwordField := page.FindByXPath(passwordXPath)
-	err = passwordField.SendKeys(password)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_password_only",
-				"part":      "password_field",
-			}).Warningln(err.Error())
-	}
-	submitField := page.FindByXPath(submitXpath)
-	if submitType == "click" {
-		err = submitField.Click()
-	} else {
-		err = submitField.Submit()
-	}
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "login_password_only",
-				"part":      "submit_field",
-			}).Warningln(err.Error())
-	}
-}
-
-/// checkExpected Checks if the expected text exists in the given path or page
-func checkExpected(page *agouti.Page, expectedXPath string, expectedText string) bool {
-	if expectedXPath != "" {
-		expectedElement := page.FindByXPath(expectedXPath)
-		expectedFieldText, err := expectedElement.Text()
-		if err != nil {
-			logger.WithFields(
-				log.Fields{
-					"subsystem": "check_expected",
-					"part":      "xpath_data",
-				}).Warningln(err.Error())
-			return false
-		}
-		return expectedFieldText == expectedText
-	}
-	time.Sleep(2 * time.Second)
-	content, err := page.HTML()
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "check_expected",
-				"part":      "match_all_data",
-			}).Warningln(err.Error())
-		return false
-	}
-	return strings.Contains(content, expectedText)
-}
-
-/// getNoLogin The no login function that only returns the page without any submissions
-func getNoLogin(page *agouti.Page, urlText string) {
-	err := page.Navigate(urlText)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "driver",
-				"part":      "navigation_error",
-			}).Warningln(err.Error())
-	}
-}
-
-/// checkExpectedResponse Checks if the expected string exists in the http.Response
-func checkExpectedResponse(response *http.Response, expectedText string) bool {
-	content, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "check_expected",
-				"part":      "get_content",
-			}).Warningln(err.Error())
-	}
-	return strings.Contains(string(content), expectedText)
-}
-
-/// selectFrame selects given frame for the given page
-func selectFrame(framePath string, page *agouti.Page) {
-	err := page.Find(framePath).SwitchToFrame()
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "check_expected",
-				"part":      "switch",
-			}).Warningln(err.Error())
-	}
-}
-
-/// switchToRootFrame Switches to the root frame
-func switchToRootFrame(page *agouti.Page) {
-	err := page.SwitchToRootFrame()
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "check_expected",
-				"part":      "switch_to_root_frame",
-			}).Warningln(err.Error())
-	}
-}
-
-///getStatus Returns the data from the server
+// getStatus Returns the data from the server
 func getStatus(config SingleLoginConfig) (status bool, elapsed float64) {
-	status = false
-	driver := startDriver()
-	page, err := driver.NewPage()
-	if err != nil {
-		logger.WithFields(
-			log.Fields{
-				"subsystem": "driver",
-				"part":      "new_page",
-			}).Warningln(err.Error())
-	} else {
-		err = page.SetPageLoad(timeout * 1000)
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.DisableGPU,
+	)
+
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancel()
+
+	// also set up a custom logger
+	taskCtx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
+	defer cancel()
+
+	// ensure that the browser process is started
+	if err := chromedp.Run(taskCtx); err != nil {
+		log.Fatal(err)
 	}
+
+	status = false
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+
+	var text string
+	tasks := []chromedp.Action{chromedp.Navigate(config.Url)}
+	tasks = append(tasks, loginShibboleth(config.Url, config.Username, config.Password, config.UsernameXpath, config.PasswordXpath, config.SubmitXpath, config.LogoutUrl, &text)...)
+
+	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 
 	start := time.Now()
-	switch config.LoginType {
-	case "simple_form":
-		loginSimpleForm(page, config.Url, config.UsernameXpath, config.PasswordXpath, config.SubmitXpath,
-			config.Username, config.Password, config.SubmitType, config.WaitTime)
-		break
-	case "shibboleth":
-		loginShibboleth(page, config.Url, config.Username, config.Password, config.UsernameXpath,
-			config.PasswordXpath, config.SubmitXpath, config.SubmitType)
-		break
-	case "basic_auth":
-		loginBasicAuth(page, config.Url, config.Username, config.Password)
-		break
-	case "password_only":
-		loginPasswordOnly(page, config.Url, config.PasswordXpath, config.SubmitXpath, config.Password, config.SubmitType)
-		break
-	case "no_auth":
-		getNoLogin(page, config.Url)
-		break
+
+	err := chromedp.Run(ctx,
+		tasks...,
+	)
+
+	stop := time.Now()
+	if err != nil {
+		logger.WithFields(
+			log.Fields{
+				"subsystem": "driver",
+				"part":      "navigation_error",
+			}).Warningln(err.Error())
 	}
-	if config.LoginType == "api" {
-		response := loginApi(config.Url, config.UsernameXpath, config.PasswordXpath, config.Username, config.Password,
-			config.Method)
-		status = checkExpectedResponse(response, config.ExpectedText)
+	if strings.Contains(text, config.ExpectedText) {
+		status = false
 	} else {
-		if config.ExpectedTextFrame != "" {
-			selectFrame(config.ExpectedTextFrame, page)
-		}
-		status = checkExpected(page, config.ExpectedTextXpath, config.ExpectedText)
-		if config.ExpectedTextFrame != "" {
-			switchToRootFrame(page)
-		}
-	}
-	end := time.Now()
-	elapsed = end.Sub(start).Seconds()
-	// logout if the value is set
-	if config.LogoutXpath != "" {
-		logOut(page, config.LogoutXpath, config.LogoutSubmitType, config.LogoutFrame)
+		status = true
 	}
 
-	if err == nil {
-		err = page.CloseWindow()
-		if err != nil {
-			logger.WithFields(
-				log.Fields{
-					"subsystem": "driver",
-					"part":      "new_page_close_error",
-				}).Warningln(err.Error())
-		}
-	}
-	stopDriver(driver)
+	elapsed = stop.Sub(start).Seconds()
 	return status, elapsed
 }
 
