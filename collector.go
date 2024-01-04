@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"io/ioutil"
 	"os"
 	"strings"
 	"time"
@@ -50,7 +49,7 @@ type SingleLoginConfig struct {
 // readConfig Reads the yaml configuration from the given server
 func readConfig(path string) LoginConfigs {
 	var loginConfigs LoginConfigs
-	yamlFile, err := ioutil.ReadFile(path)
+	yamlFile, err := os.ReadFile(path)
 	if err != nil {
 		logger.WithFields(
 			log.Fields{
@@ -173,9 +172,9 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64) {
 			}).Warningln(err.Error())
 	}
 	if strings.Contains(text, config.ExpectedText) {
-		status = false
-	} else {
 		status = true
+	} else {
+		status = false
 	}
 
 	elapsed = stop.Sub(start).Seconds()
