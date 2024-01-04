@@ -58,21 +58,21 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 			Name: "login_status",
 			Help: "Shows the status of the given target 0 for failure 1 for success"},
 		[]string{"target", "login_type"})
-	var elapsedTotalMetric = prometheus.NewGauge(
+	var elapsedTotalMetric = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: "login_total_elapsed_seconds",
-			Help: "Shows how long it took the get the data in seconds",
-		})
-	var elapsedMetric = prometheus.NewGauge(
+			Help: "Shows how long it took the get the data in seconds"},
+		[]string{"target", "login_type"})
+	var elapsedMetric = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: "login_elapsed_seconds",
-			Help: "Shows how long it to login in seconds",
-		})
+			Help: "Shows how long it to login in seconds"},
+		[]string{"target", "login_type"})
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(statusMetric)
 	registry.MustRegister(elapsedMetric)
 	registry.MustRegister(elapsedTotalMetric)
 	statusMetric.WithLabelValues(target, loginType).Set(float64(statusValue))
-	elapsedMetric.Set(elapsed)
-	elapsedTotalMetric.Set(elapsedTotal)
+	elapsedMetric.WithLabelValues(target, loginType).Set(elapsed)
+	elapsedTotalMetric.WithLabelValues(target, loginType).Set(elapsedTotal)
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)
 }
