@@ -48,7 +48,7 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 		loginType = targetConfig.LoginType
 	}
 	// Get the status and elapsed time for the tests
-	status, elapsed := getStatus(targetConfig)
+	status, elapsed, elapsedTotal := getStatus(targetConfig)
 	statusValue := 0
 	if status {
 		statusValue = 1
@@ -58,15 +58,21 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 			Name: "login_status",
 			Help: "Shows the status of the given target 0 for failure 1 for success"},
 		[]string{"target", "login_type"})
+	var elapsedTotalMetric = prometheus.NewGauge(
+		prometheus.GaugeOpts{Name: "login_total_elapsed_seconds",
+			Help: "Shows how long it took the get the data in seconds",
+		})
 	var elapsedMetric = prometheus.NewGauge(
 		prometheus.GaugeOpts{Name: "login_elapsed_seconds",
-			Help: "Shows how long it took the get the data in seconds",
+			Help: "Shows how long it to login in seconds",
 		})
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(statusMetric)
 	registry.MustRegister(elapsedMetric)
+	registry.MustRegister(elapsedTotalMetric)
 	statusMetric.WithLabelValues(target, loginType).Set(float64(statusValue))
 	elapsedMetric.Set(elapsed)
+	elapsedTotalMetric.Set(elapsedTotal)
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)
 }

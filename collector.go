@@ -112,9 +112,18 @@ func getLogger() *log.Logger {
 	return logger
 }
 
+type LoginResult struct {
+	time *time.Time
+}
+
+func (l LoginResult) Do(context.Context) error {
+	*l.time = time.Now()
+	return nil
+}
+
 // loginShibboleth Logs in the shibboleth system using the given username and password
 func loginShibboleth(urlText string, username string, password string, usernameXpath string,
-	passwordXpath string, submitXpath string, logoutUrl string, text *string) []chromedp.Action {
+	passwordXpath string, submitXpath string, logoutUrl string, text *string, loginTime *time.Time) []chromedp.Action {
 	actions := []chromedp.Action{}
 	if usernameXpath == "" && passwordXpath == "" && submitXpath == "" {
 		usernameXpath = "//input[@id='username']"
@@ -123,12 +132,12 @@ func loginShibboleth(urlText string, username string, password string, usernameX
 	}
 	actions = append(actions,
 		chromedp.WaitVisible(usernameXpath), chromedp.SendKeys(usernameXpath, username), chromedp.SendKeys(passwordXpath, password),
-		chromedp.Click(submitXpath), chromedp.WaitVisible("//pre"), chromedp.Text("body", text), chromedp.Navigate(logoutUrl))
+		chromedp.Click(submitXpath), chromedp.WaitVisible("//pre"), chromedp.Text("body", text), LoginResult{time: loginTime}, chromedp.Navigate(logoutUrl))
 	return actions
 }
 
 // getStatus Returns the data from the server
-func getStatus(config SingleLoginConfig) (status bool, elapsed float64) {
+func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedTotal float64) {
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.DisableGPU,
@@ -151,8 +160,9 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64) {
 	defer cancel()
 
 	var text string
+	var loginTime time.Time
 	tasks := []chromedp.Action{chromedp.Navigate(config.Url)}
-	tasks = append(tasks, loginShibboleth(config.Url, config.Username, config.Password, config.UsernameXpath, config.PasswordXpath, config.SubmitXpath, config.LogoutUrl, &text)...)
+	tasks = append(tasks, loginShibboleth(config.Url, config.Username, config.Password, config.UsernameXpath, config.PasswordXpath, config.SubmitXpath, config.LogoutUrl, &text, &loginTime)...)
 
 	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -177,8 +187,9 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64) {
 		status = false
 	}
 
-	elapsed = stop.Sub(start).Seconds()
-	return status, elapsed
+	elapsed = loginTime.Sub(start).Seconds()
+	elapsedTotal = stop.Sub(start).Seconds()
+	return status, elapsed, elapsedTotal
 }
 
 func init() {
