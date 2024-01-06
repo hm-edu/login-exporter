@@ -132,7 +132,7 @@ func loginShibboleth(urlText string, username string, password string, usernameX
 	}
 	actions = append(actions,
 		chromedp.WaitVisible(usernameXpath), chromedp.SendKeys(usernameXpath, username), chromedp.SendKeys(passwordXpath, password),
-		chromedp.Click(submitXpath), chromedp.WaitVisible("//pre"), chromedp.Text("body", text), LoginResult{time: loginTime}, chromedp.Navigate(logoutUrl))
+		chromedp.Click(submitXpath), chromedp.WaitVisible("//pre"), chromedp.Text("body", text), LoginResult{time: loginTime}, chromedp.Navigate(logoutUrl), chromedp.WaitVisible("//*[@id='propagate_yes']"), chromedp.Click("//*[@id='propagate_yes']"), chromedp.WaitVisible("//*[@class='logout success']"))
 	return actions
 }
 
