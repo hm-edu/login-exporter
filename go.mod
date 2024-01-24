@@ -6,7 +6,6 @@ require (
 	github.com/chromedp/chromedp v0.9.3
 	github.com/prometheus/client_golang v1.18.0
 	gopkg.in/yaml.v3 v3.0.1
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -16,6 +15,7 @@ require (
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.3.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 )
 
@@ -26,7 +26,6 @@ require (
 	github.com/prometheus/client_model v0.5.0 // indirect
 	github.com/prometheus/common v0.45.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
-	github.com/sclevine/agouti v3.0.0+incompatible
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/sys v0.15.0 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
