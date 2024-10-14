@@ -3,13 +3,13 @@ module github.com/hm-edu/login_exporter
 go 1.21
 
 require (
-	github.com/chromedp/chromedp v0.10.0
+	github.com/chromedp/chromedp v0.11.0
 	github.com/prometheus/client_golang v1.20.4
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	github.com/chromedp/cdproto v0.0.0-20240801214329-3f85d328b335 // indirect
+	github.com/chromedp/cdproto v0.0.0-20241003230502-a4a8f7c660df // indirect
 	github.com/chromedp/sysutil v1.0.0 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
@@ -29,6 +29,6 @@ require (
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/sirupsen/logrus v1.9.3
-	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/sys v0.26.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )
