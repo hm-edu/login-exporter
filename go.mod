@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/chromedp/chromedp v0.11.0
-	github.com/prometheus/client_golang v1.20.4
+	github.com/prometheus/client_golang v1.20.5
 	gopkg.in/yaml.v3 v3.0.1
 )
 
