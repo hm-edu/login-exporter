@@ -5,7 +5,7 @@ go 1.23
 toolchain go1.23.3
 
 require (
-	github.com/chromedp/chromedp v0.11.1
+	github.com/chromedp/chromedp v0.11.2
 	github.com/prometheus/client_golang v1.20.5
 	gopkg.in/yaml.v3 v3.0.1
 )
