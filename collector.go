@@ -22,28 +22,18 @@ type LoginConfigs struct {
 // SingleLoginConfig Is the login configuration settings
 // that is used to read the yaml files.
 type SingleLoginConfig struct {
-	Url               string `yaml:"url"`
-	Target            string `yaml:"target"`
-	Username          string `yaml:"username"`
-	Password          string `yaml:"password"`
-	Certificate       string `yaml:"certificate"`
-	UsernameXpath     string `yaml:"username_xpath"`
-	PasswordXpath     string `yaml:"password_xpath"`
-	CertificateXpath  string `yaml:"certificate_xpath"`
-	SubmitXpath       string `yaml:"submit_xpath"`
-	LoginType         string `yaml:"login_type"`
-	ExpectedText      string `yaml:"expected_text"`
-	ExpectedTextXpath string `yaml:"expected_text_xpath"`
-	ExpectedTextFrame string `yaml:"expected_text_frame"`
-	SSLCheck          bool   `yaml:"ssl_check"`
-	Debug             bool   `yaml:"debug"`
-	Method            string `yaml:"method"`
-	SubmitType        string `yaml:"submit_type"`
-	LogoutXpath       string `yaml:"logout_xpath"`
-	LogoutSubmitType  string `yaml:"logout_submit_type"`
-	LogoutFrame       string `yaml:"logout_frame"`
-	LogoutUrl         string `yaml:"logout_url"`
-	WaitTime          int    `yaml:"wait_time"`
+	Url                    string `yaml:"url"`
+	Target                 string `yaml:"target"`
+	ExpectedHeaderCssClass string `yaml:"expected_header_css_class"`
+	ExpectedTextCssClass   string `yaml:"expected_text_css_class"`
+	LoginCssClass          string `yaml:"login_css_class"`
+	Username               string `yaml:"username"`
+	Password               string `yaml:"password"`
+	UsernameXpath          string `yaml:"username_xpath"`
+	PasswordXpath          string `yaml:"password_xpath"`
+	SubmitCssClass         string `yaml:"submit_css_class"`
+	ExpectedText           string `yaml:"expected_text"`
+	LoginType              string `yaml:"login_type"`
 }
 
 // readConfig Reads the yaml configuration from the given server
@@ -121,36 +111,14 @@ func (l LoginResult) Do(context.Context) error {
 	return nil
 }
 
-// loginShibboleth Logs in the shibboleth system using the given username and password
-func loginShibboleth(urlText string, username string, password string, usernameXpath string,
-	passwordXpath string, submitXpath string, logoutUrl string, text *string, loginTime *time.Time) []chromedp.Action {
-	actions := []chromedp.Action{}
-	if usernameXpath == "" && passwordXpath == "" && submitXpath == "" {
-		usernameXpath = "//input[@id='username']"
-		passwordXpath = "//input[@id='password']"
-		submitXpath = "//button[@class='aai_login_button']"
-	}
-	actions = append(actions,
-		chromedp.WaitVisible(usernameXpath), chromedp.SendKeys(usernameXpath, username), chromedp.SendKeys(passwordXpath, password),
-		chromedp.Click(submitXpath), chromedp.WaitVisible("//pre"), chromedp.Text("body", text), LoginResult{time: loginTime}, chromedp.Navigate(logoutUrl), chromedp.WaitVisible("//*[@id='propagate_yes']"), chromedp.Click("//*[@id='propagate_yes']"), chromedp.WaitVisible("//*[@class='logout success']"))
-	return actions
-}
-
 // getStatus Returns the data from the server
 func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedTotal float64) {
-
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.DisableGPU,
-	)
-
-	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.DisableGPU)...)
 	defer cancel()
 
-	// also set up a custom logger
 	taskCtx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
 	defer cancel()
 
-	// ensure that the browser process is started
 	if err := chromedp.Run(taskCtx); err != nil {
 		log.Fatal(err)
 	}
@@ -161,10 +129,20 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 
 	var text string
 	var loginTime time.Time
-	tasks := []chromedp.Action{chromedp.Navigate(config.Url)}
-	tasks = append(tasks, loginShibboleth(config.Url, config.Username, config.Password, config.UsernameXpath, config.PasswordXpath, config.SubmitXpath, config.LogoutUrl, &text, &loginTime)...)
+	tasks := []chromedp.Action{
+		chromedp.Navigate(config.Url),
+		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+		chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
+		chromedp.WaitVisible(config.SubmitCssClass),
+		chromedp.SendKeys(config.UsernameXpath, config.Username),
+		chromedp.SendKeys(config.PasswordXpath, config.Password),
+		chromedp.Click(config.SubmitCssClass),
+		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+		chromedp.Text(config.ExpectedTextCssClass, &text),
+		LoginResult{time: &loginTime},
+	}
 
-	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	start := time.Now()
