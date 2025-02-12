@@ -1,4 +1,4 @@
-FROM golang:1.23.6 
+FROM golang:1.24.0 
 WORKDIR /app
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o exporter .
