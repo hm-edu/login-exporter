@@ -6,7 +6,7 @@ toolchain go1.24.0
 
 require (
 	github.com/chromedp/chromedp v0.13.0
-	github.com/prometheus/client_golang v1.21.0
+	github.com/prometheus/client_golang v1.21.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
