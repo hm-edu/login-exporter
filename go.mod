@@ -2,7 +2,7 @@ module github.com/hm-edu/login_exporter
 
 go 1.24
 
-toolchain go1.24.0
+toolchain go1.24.1
 
 require (
 	github.com/chromedp/chromedp v0.13.0
