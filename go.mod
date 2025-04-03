@@ -5,13 +5,13 @@ go 1.24
 toolchain go1.24.2
 
 require (
-	github.com/chromedp/chromedp v0.13.5
+	github.com/chromedp/chromedp v0.13.6
 	github.com/prometheus/client_golang v1.21.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	github.com/chromedp/cdproto v0.0.0-20250401205909-91afd104e2b8 // indirect
+	github.com/chromedp/cdproto v0.0.0-20250403032234-65de8f5d025b // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20250211171154-1ae217ad3535 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
