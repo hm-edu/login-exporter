@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/pquerna/otp/totp"
 	log "github.com/sirupsen/logrus"
 
 	"gopkg.in/yaml.v3"
@@ -29,11 +33,14 @@ type SingleLoginConfig struct {
 	LoginCssClass          string `yaml:"login_css_class"`
 	Username               string `yaml:"username"`
 	Password               string `yaml:"password"`
+	TotpSeed               string `yaml:"totp_seed"`
 	UsernameXpath          string `yaml:"username_xpath"`
 	PasswordXpath          string `yaml:"password_xpath"`
+	TotpXpath              string `yaml:"totp_xpath"`
 	SubmitCssClass         string `yaml:"submit_css_class"`
 	ExpectedText           string `yaml:"expected_text"`
 	LoginType              string `yaml:"login_type"`
+	LogoutUrl              string `yaml:"logout_url"`
 }
 
 // readConfig Reads the yaml configuration from the given server
@@ -129,17 +136,49 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 
 	var text string
 	var loginTime time.Time
-	tasks := []chromedp.Action{
-		chromedp.Navigate(config.Url),
-		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
-		chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
-		chromedp.WaitVisible(config.SubmitCssClass),
-		chromedp.SendKeys(config.UsernameXpath, config.Username),
-		chromedp.SendKeys(config.PasswordXpath, config.Password),
-		chromedp.Click(config.SubmitCssClass),
-		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
-		chromedp.Text(config.ExpectedTextCssClass, &text),
-		LoginResult{time: &loginTime},
+	var tasks []chromedp.Action
+	if config.TotpSeed == "" {
+		tasks = []chromedp.Action{
+			chromedp.Navigate(config.Url),
+			chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+			chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
+			chromedp.WaitVisible(config.SubmitCssClass),
+			chromedp.SendKeys(config.UsernameXpath, config.Username),
+			chromedp.SendKeys(config.PasswordXpath, config.Password),
+			chromedp.Click(config.SubmitCssClass),
+			chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+			chromedp.Text(config.ExpectedTextCssClass, &text),
+			LoginResult{time: &loginTime},
+			chromedp.Navigate(config.LogoutUrl),
+		}
+	} else {
+		tasks = []chromedp.Action{
+			chromedp.Navigate(config.Url),
+			chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+			chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
+			chromedp.WaitVisible(config.SubmitCssClass),
+			chromedp.SendKeys(config.UsernameXpath, config.Username),
+			chromedp.SendKeys(config.PasswordXpath, config.Password),
+			chromedp.Click(config.SubmitCssClass),
+			chromedp.WaitVisible(config.TotpXpath),
+			chromedp.QueryAfter(config.TotpXpath, func(ctx context.Context, execCtx runtime.ExecutionContextID, nodes ...*cdp.Node) error {
+				if len(nodes) < 1 {
+					return fmt.Errorf("selector %q did not return any nodes", config.TotpXpath)
+				}
+				otp, err := totp.GenerateCode(config.TotpSeed, time.Now())
+				if err != nil {
+					return fmt.Errorf("failed to generate OTP: %v", err)
+				}
+
+				n := nodes[0]
+				return chromedp.KeyEventNode(n, otp).Do(ctx)
+			}, chromedp.NodeVisible),
+			chromedp.Click(config.SubmitCssClass),
+			chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+			chromedp.Text(config.ExpectedTextCssClass, &text),
+			LoginResult{time: &loginTime},
+			chromedp.Navigate(config.LogoutUrl),
+		}
 	}
 
 	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
