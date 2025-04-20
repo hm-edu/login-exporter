@@ -5,7 +5,7 @@ go 1.24
 toolchain go1.24.2
 
 require (
-	github.com/chromedp/cdproto v0.0.0-20250417220500-b38043e8e6c8
+	github.com/chromedp/cdproto v0.0.0-20250420205042-3f8c33ccbdec
 	github.com/chromedp/chromedp v0.13.6
 	github.com/pquerna/otp v1.4.0
 	github.com/prometheus/client_golang v1.22.0
