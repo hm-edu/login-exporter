@@ -129,6 +129,7 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 				"subsystem": "driver",
 				"part":      "warmup",
 			}).Warningln(err.Error())
+		return false, -1, -1
 	}
 
 	ctx, cancelTimeout := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
@@ -181,6 +182,7 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 				"subsystem": "driver",
 				"part":      "navigation_error",
 			}).Warningln(err.Error())
+		return false, -1, -1
 	}
 
 	if strings.Contains(text, config.ExpectedText) {
