@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -10,7 +9,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) {
+func probeHandler(w http.ResponseWriter, r *http.Request, configs map[string]SingleLoginConfig) {
 
 	// Logs all the connections
 	logger.WithFields(
@@ -22,7 +21,6 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 			"user_agent":   r.UserAgent(),
 		}).Info("This connection was established")
 
-	var loginType = ""
 	// Extract the target from the url
 	target := r.URL.Query().Get("target")
 	if target == "" {
@@ -35,8 +33,8 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 		return
 	}
 	// Find the target in the configuration
-	targetConfig, err := findTargetInConfig(configs, target)
-	if err != nil {
+	targetConfig, ok := configs[target]
+	if !ok {
 		logger.WithFields(
 			log.Fields{
 				"subsystem": "probe_handler",
@@ -44,9 +42,8 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 			}).Error("The given target does not have configuration")
 		w.WriteHeader(http.StatusBadRequest)
 		return
-	} else {
-		loginType = targetConfig.LoginType
 	}
+	loginType := targetConfig.LoginType
 	// Get the status and elapsed time for the tests
 	status, elapsed, elapsedTotal := getStatus(targetConfig)
 	statusValue := 0
@@ -85,22 +82,16 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs LoginConfigs) 
 	h.ServeHTTP(w, r)
 }
 
-// / findTargetInConfig Finds the given target in login configs
-func findTargetInConfig(configs LoginConfigs, target string) (SingleLoginConfig, error) {
-	for _, config := range configs.Configs {
-		if config.Target == target {
-			return config, nil
-		}
-	}
-	config := SingleLoginConfig{}
-	return config, fmt.Errorf("can not find target: %s", target)
-}
-
 func main() {
 	loginConfig := readConfig(configFilePath)
 
+	configMap := make(map[string]SingleLoginConfig, len(loginConfig.Configs))
+	for _, c := range loginConfig.Configs {
+		configMap[c.Target] = c
+	}
+
 	http.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
-		probeHandler(w, r, loginConfig)
+		probeHandler(w, r, configMap)
 	})
 
 	logger.WithFields(

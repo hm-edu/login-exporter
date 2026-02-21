@@ -88,7 +88,7 @@ func getCommandLineOptions() {
 	flag.StringVar(&logPath, "log_file", "login_exporter.log", "Log file path")
 	flag.StringVar(&logLevel, "log_level", "INFO", "Log level")
 
-	flag.IntVar(&timeout, "timeout", 60, "Timeout in seconds")
+	flag.IntVar(&timeout, "timeout", 120, "Timeout in seconds")
 
 	flag.Parse()
 }
@@ -113,53 +113,37 @@ type LoginResult struct {
 	time *time.Time
 }
 
-func (l LoginResult) Do(context.Context) error {
+func (l LoginResult) Do(ctx context.Context) error {
 	*l.time = time.Now()
 	return nil
 }
 
 // getStatus Returns the data from the server
 func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedTotal float64) {
-	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.DisableGPU)...)
-	defer cancel()
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.DisableGPU)...)
+	defer cancelAlloc()
 
-	taskCtx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
-	defer cancel()
+	ctx, cancelCtx := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
+	defer cancelCtx()
 
-	if err := chromedp.Run(taskCtx); err != nil {
-		log.Fatal(err)
-	}
-
-	status = false
-	ctx, cancel := chromedp.NewContext(context.Background())
-	defer cancel()
+	ctx, cancelTimeout := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancelTimeout()
 
 	var text string
 	var loginTime time.Time
-	var tasks []chromedp.Action
-	if config.TotpSeed == "" {
-		tasks = []chromedp.Action{
-			chromedp.Navigate(config.Url),
-			chromedp.WaitVisible(config.ExpectedHeaderCssClass),
-			chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
-			chromedp.WaitVisible(config.SubmitCssClass),
-			chromedp.SendKeys(config.UsernameXpath, config.Username),
-			chromedp.SendKeys(config.PasswordXpath, config.Password),
-			chromedp.Click(config.SubmitCssClass),
-			chromedp.WaitVisible(config.ExpectedHeaderCssClass),
-			chromedp.Text(config.ExpectedTextCssClass, &text),
-			LoginResult{time: &loginTime},
-			chromedp.Navigate(config.LogoutUrl),
-		}
-	} else {
-		tasks = []chromedp.Action{
-			chromedp.Navigate(config.Url),
-			chromedp.WaitVisible(config.ExpectedHeaderCssClass),
-			chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
-			chromedp.WaitVisible(config.SubmitCssClass),
-			chromedp.SendKeys(config.UsernameXpath, config.Username),
-			chromedp.SendKeys(config.PasswordXpath, config.Password),
-			chromedp.Click(config.SubmitCssClass),
+
+	tasks := []chromedp.Action{
+		chromedp.Navigate(config.Url),
+		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+		chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
+		chromedp.WaitVisible(config.SubmitCssClass),
+		chromedp.SendKeys(config.UsernameXpath, config.Username),
+		chromedp.SendKeys(config.PasswordXpath, config.Password),
+		chromedp.Click(config.SubmitCssClass),
+	}
+
+	if config.TotpSeed != "" {
+		tasks = append(tasks,
 			chromedp.WaitVisible(config.TotpXpath),
 			chromedp.QueryAfter(config.TotpXpath, func(ctx context.Context, execCtx runtime.ExecutionContextID, nodes ...*cdp.Node) error {
 				if len(nodes) < 1 {
@@ -169,28 +153,23 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 				if err != nil {
 					return fmt.Errorf("failed to generate OTP: %v", err)
 				}
-
-				n := nodes[0]
-				return chromedp.KeyEventNode(n, otp).Do(ctx)
+				return chromedp.KeyEventNode(nodes[0], otp).Do(ctx)
 			}, chromedp.NodeVisible),
 			chromedp.Click(config.SubmitCssClass),
-			chromedp.WaitVisible(config.ExpectedHeaderCssClass),
-			chromedp.Text(config.ExpectedTextCssClass, &text),
-			LoginResult{time: &loginTime},
-			chromedp.Navigate(config.LogoutUrl),
-		}
+		)
 	}
 
-	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	start := time.Now()
-
-	err := chromedp.Run(ctx,
-		tasks...,
+	tasks = append(tasks,
+		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+		chromedp.Text(config.ExpectedTextCssClass, &text),
+		LoginResult{time: &loginTime},
+		chromedp.Navigate(config.LogoutUrl),
 	)
 
+	start := time.Now()
+	err := chromedp.Run(ctx, tasks...)
 	stop := time.Now()
+
 	if err != nil {
 		logger.WithFields(
 			log.Fields{
@@ -198,14 +177,16 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 				"part":      "navigation_error",
 			}).Warningln(err.Error())
 	}
+
 	if strings.Contains(text, config.ExpectedText) {
 		status = true
+		elapsed = loginTime.Sub(start).Seconds()
+		elapsedTotal = stop.Sub(start).Seconds()
 	} else {
-		status = false
+		elapsed = -1
+		elapsedTotal = -1
 	}
 
-	elapsed = loginTime.Sub(start).Seconds()
-	elapsedTotal = stop.Sub(start).Seconds()
 	return status, elapsed, elapsedTotal
 }
 
