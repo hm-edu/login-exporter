@@ -95,12 +95,8 @@ func getCommandLineOptions() {
 
 // getLogger Returns the logger that is used to log the data
 func getLogger() *log.Logger {
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0660)
-	if err != nil {
-		panic(err)
-	}
 	logger.SetFormatter(&log.JSONFormatter{})
-	logger.SetOutput(f)
+	logger.SetOutput(os.Stdout)
 	parsedLevel, err := log.ParseLevel(logLevel)
 	if err != nil {
 		panic(err)
@@ -125,6 +121,15 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 
 	ctx, cancelCtx := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
 	defer cancelCtx()
+
+	// warmup the browser
+	if err := chromedp.Run(ctx); err != nil {
+		logger.WithFields(
+			log.Fields{
+				"subsystem": "driver",
+				"part":      "warmup",
+			}).Warningln(err.Error())
+	}
 
 	ctx, cancelTimeout := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancelTimeout()
