@@ -1,31 +1,23 @@
 # Login Exporter
 
-Login Exporter is a simple Prometheus exporter that uses Chrome and 
-Chrome-driver to open a website, to log in and then check for a given
-text in the result. It simulate the first user interactions for the
-given application. This can be used for the general availability test
-of the application for the end users and for status management.
+Login Exporter is a Prometheus exporter that uses [chromedp](https://github.com/chromedp/chromedp)
+to drive a headless Chrome browser, log in to a web application, and verify that an expected
+text is present in the result. It simulates real end-user login interactions and can be used
+for availability monitoring and status management of web applications.
 
 ## Installation
 
-This application it self does not need any installation, copy the binary
-in the given directory should be enough. For running the logins and test
-it uses chrome-headless (chromium-headless) and the chrome-driver, both
-of them should be installed on the given machine. To Install them you
-need to follow these guides:
+The exporter communicates with Chrome directly via the Chrome DevTools Protocol (CDP) using
+`chromedp`. No separate ChromeDriver binary is required — you only need
+Chrome or Chromium installed on the machine.
 
-### Install on MacOS
-
-To install the needed dependencies, use brew:
+### Install on macOS
 
 ```bash
-brew install chromedriver
-brew cask install google-chrome
+brew install --cask google-chrome
 ```
 
 ### Install on Ubuntu
-
-To install the needed dependencies on Ubuntu:
 
 ```bash
 # Install Chrome.
@@ -33,201 +25,110 @@ sudo curl -sS -o - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-k
 sudo echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list
 sudo apt-get -y update
 sudo apt-get -y install google-chrome-stable
-
-# Install ChromeDriver.
-CHROME_DRIVER_VERSION=`curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE`
-wget -N http://chromedriver.storage.googleapis.com/$CHROME_DRIVER_VERSION/chromedriver_linux64.zip -P ~/
-unzip ~/chromedriver_linux64.zip -d ~/
-rm ~/chromedriver_linux64.zip
-sudo mv -f ~/chromedriver /usr/local/bin/chromedriver
-sudo chown root:root /usr/local/bin/chromedriver
-sudo chmod 0755 /usr/local/bin/chromedriver
 ```
 
 ## Configuration
 
-The following parameters can be set for the application:
+The following command-line parameters are available:
 
-|  parameter  | default           | help|
-|------------ |-------------------|-----|
-| -config     | login.yml         | The path for the configuration file. This should be readable by running user|
-| -listen_ip  | 127.0.0.1         | The IP address the application should listen to|
-| -listen_port| 9980              | The port the application is listening to|
-| -log_level  | INFO              | The log level for the application|
-| -log_path   | login_exporter.log| The path for the log file. This should be writable by the running user|
-| -timeout    | 60                | The timeout for the application to stop the check in seconds|
+| parameter      | default                     | description |
+|----------------|-----------------------------|-------------|
+| `-config`      | `/etc/prometheus/login.yml` | Path to the login configuration file (must be readable by the running user) |
+| `-listen_ip`   | `127.0.0.1`                 | IP address the exporter listens on |
+| `-listen_port` | `9980`                      | Port the exporter listens on |
+| `-log_level`   | `INFO`                      | Log level (`DEBUG`, `INFO`, `WARN`, `ERROR`) |
+| `-timeout`     | `60`                        | Timeout in seconds before a probe is aborted |
 
+Logs are written to **stdout** in JSON format.
 
-## Login.YML
+## login.yml
 
-There is an example file `login.yml.dist` available which can be used as
-template for the `login.yml`. For every type of login the following 
-parameters should be set:
+The configuration file defines a list of `targets`. Each target describes one login probe.
+An example file is available at `misc/login.yml.dist`.
 
-### Simple Form
+### Configuration fields
 
-The simple is the most common type of login that is used for different
-application. As long as no `CAPTCHAS` are used, this should work for every
-kind of login forms. The following parameters should be set:
+| field                       | required | description |
+|-----------------------------|----------|-------------|
+| `target`                    | yes      | Unique name used to look up this config and as a Prometheus label |
+| `url`                       | yes      | URL of the page containing the login entry point |
+| `login_type`                | yes      | Arbitrary string used as a `login_type` label on all metrics (e.g. `shibboleth`) |
+| `expected_header_css_class` | yes      | CSS selector that must be visible after the page loads (signals page-load completion) |
+| `login_css_class`           | yes      | CSS selector for the button/element that opens the login form |
+| `username_xpath`            | yes      | XPath of the username input field |
+| `password_xpath`            | yes      | XPath of the password input field |
+| `submit_css_class`          | yes      | CSS selector for the login submit button |
+| `username`                  | yes      | Username to submit |
+| `password`                  | yes      | Password to submit |
+| `expected_text_css_class`   | yes      | CSS selector of the element whose text content is checked after login |
+| `expected_text`             | yes      | Text that must appear in the element matched by `expected_text_css_class` |
+| `logout_url`                | yes      | URL to navigate to after the check (performs logout) |
+| `totp_seed`                 | no       | Base-32 TOTP seed; when set, a TOTP step is performed after credentials |
+| `totp_xpath`                | no       | XPath of the TOTP input field (required when `totp_seed` is set) |
 
-| parameter      | help           |
-|----------------|----------------|
-| login_type     | simple_form    |
-| target         | The target that is searched for to find the config|
-| url            | The url that login form is included|
-| username       | The username that should be used for the login|
-| password       | The password that should be used for the login|
-| username_xpath | The xpath address of the username field (must be unique)|
-| password_xpath | The xpath address of the password field (must be unique)|
-| submit_xpath   | The xpath address of the submit button (must be unique)|
-| expected_text  | The text that is expected to be there|
+### Login flow
 
-The following parameters are optional:
+1. Navigate to `url`.
+2. Wait for `expected_header_css_class` to become visible (page-load milestone).
+3. Click `login_css_class` to open the login form.
+4. Wait for `submit_css_class` to become visible (form-visible milestone).
+5. Enter `username` into `username_xpath` and `password` into `password_xpath`.
+6. Click `submit_css_class`.
+7. *(Optional, when `totp_seed` is set)* Wait for `totp_xpath`, generate a TOTP code from
+   `totp_seed`, enter the code, and click `submit_css_class` again.
+8. Wait for `expected_header_css_class` to become visible again (logged-in milestone).
+9. Read the text content of `expected_text_css_class` and verify it contains `expected_text`.
+10. Navigate to `logout_url`.
 
-| parameter          | help           |
-|--------------------|----------------|
-| expected_text_xpath| The expected text xpath (must be unique), if not given the whole text is searched for the string|
-| submit_type        | The type of submission that should be used it can be click or submit, default is submit|
-| logout_xpath       | The xpath that should be used for the logout button|
-| wait_time          | The time that should the form submitter wait for the page to load in seconds|
-| expected_text_frame| The frame that the expected text resides|
-| logout_submit_type | The submit type for the logout|
-| logout_frame       | The frame that should be used for the logout|
+### Example
 
-### Shibboleth 
+```yaml
+targets:
+  - url: "https://example.com"
+    target: "my-app"
+    login_type: "shibboleth"
+    expected_header_css_class: "h2.PageTitle"
+    expected_text_css_class: "h5.WelcomeMessage"
+    login_css_class: "button.LoginButton"
+    username_xpath: "//input[@id='username']"
+    password_xpath: "//input[@id='password']"
+    submit_css_class: "button.form-button"
+    username: "myuser"
+    password: "mypassword"
+    totp_seed: "BASE32TOTPSEEDHERE"
+    totp_xpath: "//input[@id='otp_input']"
+    expected_text: "Welcome, myuser"
+    logout_url: "https://sso.example.com/idp/profile/Logout"
+```
 
-Shibboleth is the type used for the services that use the Shibboleth IDP
-for the authentication. As all of them at the end land on the same form,
-this method can be used for all of them. The following parameters must
-be set for the Shibboleth:
+## Exposed Metrics
 
-| parameter      | help           |
-|----------------|----------------|
-| login_type     | shibboleth     |
-| target         | The target that is searched for to find the config|
-| url            | The url that login form is included|
-| username       | The username that should be used for the login|
-| password       | The password that should be used for the login|
-| expected_text  | The text that is expected to be there|
+All metrics carry `target` and `login_type` labels.
 
-The following parameters are optional:
+| metric                               | description |
+|--------------------------------------|-------------|
+| `login_status`                       | `1` for success, `0` for failure |
+| `login_elapsed_seconds`              | Total time from start until the logged-in state was confirmed |
+| `login_total_elapsed_seconds`        | Total time including logout navigation |
+| `login_page_load_elapsed_seconds`    | Time until the login page finished loading |
+| `login_form_visible_elapsed_seconds` | Time until the login form became visible |
+| `login_credentials_elapsed_seconds`  | Time for the credential step (excludes TOTP when TOTP is used) |
+| `login_totp_elapsed_seconds`         | Time for the TOTP step (`-1` when TOTP is not used) |
 
-| parameter          | help           |
-|--------------------|----------------|
-| username_xpath | The xpath address of the username field (must be unique) for Shibboleth default value is the `//input[@id='username']`|
-| password_xpath | The xpath address of the password field (must be unique) for Shibboleth default value is the `//input[@id='password']`|
-| submit_xpath   | The xpath address of the submit button (must be unique) for Shibboleth default value is the `//button[@class='aai_login_button']`|
-| expected_text_xpath| The expected text xpath (must be unique), if not given the whole text is searched for the string|
-| submit_type        | The type of submission that should be used it can be click or submit, default is submit|
-| expected_text_frame| The frame that the expected text resides|
-| logout_submit_type | The submit type for the logout|
-| logout_frame       | The frame that should be used for the logout|
-
-
-### Basic Auth
-
-The application can be used to login in Basic Auth systems. The 
-following parameters should be set for the application:
-
-| parameter      | help           |
-|----------------|----------------|
-| login_type     | basic_auth     |
-| url            | The url that login form is included|
-| target         | The target that is searched for to find the config|
-| username       | The username that should be used for the login|
-| password       | The password that should be used for the login|
-| expected_text  | The text that is expected to be there|
-
-The following parameters are optional:
-
-| parameter          | help           |
-|--------------------|----------------|
-| expected_text_xpath| The expected text xpath (must be unique), if not given the whole text is searched for the string|
-| expected_text_frame| The frame that the expected text resides|
-| logout_submit_type | The submit type for the logout|
-| logout_frame       | The frame that should be used for the logout|
-
-### Password Only
-
-Some login fields like mailman only have a single password or token
-field, this kind of authentications are also supported. The following parameters
-should be set:
-
-| parameter      | help           |
-|----------------|----------------|
-| login_type     | password_only     |
-| url            | The url that login form is included|
-| target         | The target that is searched for to find the config|
-| password       | The password that should be used for the login|
-| password_xpath | The xpath address of the password field (must be unique)|
-| expected_text  | The text that is expected to be there|
-
-The following parameters are optional
-
-| parameter          | help           |
-|--------------------|----------------|
-| expected_text_xpath| The expected text xpath (must be unique), if not given the whole text is searched for the string|
-| submit_type        | The type of submission that should be used it can be click or submit, default is submit|
-| logout_xpath       | The xpath that should be used for the logout button|
-| expected_text_frame| The frame that the expected text resides|
-| logout_submit_type | The submit type for the logout|
-| logout_frame       | The frame that should be used for the logout|
-
-### API
-
-This login exporter has limited support of API logins and approaches. 
-The API part of the application does not use the chrome driver and uses
-the `http.client` of go directly for the procedures. The following 
-parameters should be set:
- 
-| parameter      | help           |
-|----------------|----------------|
-| login_type     | api     |
-| url            | The url that login form is included|
-| target         | The target that is searched for to find the config|
-| password       | This could be key, password or token that should be used|
-| password_xpath | This is the parameter that should be used for the token or password|
-| expected_text  | The text that is expected to be there|
-
-The following parameters are optional:
-
-| parameter      | help           |
-|----------------|----------------|
-| username       | The username that should be used for the login|
-| username_xpath | The parameter that is used for the username|
-| method         | The method that should be used for the call default is POST|
-
-### No Auth
-
-When the page is only protected by IP address firewall or does not
-have any authentication, but still should be checked for a given text
-this method can be used.
-
-| parameter      | help           |
-|----------------|----------------|
-| login_type     | no_auth     |
-| url            | The url that login form is included|
-| target         | The target that is searched for to find the config|
-| expected_text  | The text that is expected to be there|
-
-These parameters are optional:
-
-| parameter          | help           |
-|--------------------|----------------|
-| expected_text_xpath| The expected text xpath (must be unique), if not given the whole text is searched for the string|
+On any error all timing metrics are set to `-1`.
 
 ## Configuring Prometheus
 
-This exporter works the same way as
-[blackbox exporter](https://github.com/prometheus/blackbox_exporter). As
-it uses a full browser to run the queries, The queries should
-be done in bigger intervals and timeout should be set to a higher number.
+This exporter works like the
+[blackbox exporter](https://github.com/prometheus/blackbox_exporter). Because it drives a
+full browser, scrape intervals should be long and timeouts high.
 
-In `prometheus.yaml the following settings should be enough:
+In `prometheus.yml`:
 
 ```yaml
   - job_name: 'login_exporter'
     scrape_interval: 5m
+    scrape_timeout: 90s
     metrics_path: /probe
     relabel_configs:
       - source_labels: [__address__]
@@ -237,12 +138,12 @@ In `prometheus.yaml the following settings should be enough:
       - target_label: __address__
         replacement: 127.0.0.1:9980
     file_sd_configs:
-    - refresh_interval: 2m
-      files:
-         - '/etc/prometheus/login_targets.json'
+      - refresh_interval: 2m
+        files:
+          - '/etc/prometheus/login_targets.json'
 ```
 
-In `login_targets.json` the following settings would be enough:
+In `login_targets.json`:
 
 ```json
 [
@@ -254,7 +155,7 @@ In `login_targets.json` the following settings would be enough:
       "job": "login_exporter"
     },
     "targets": [
-      "target_which_is_defined_in_login.yml_before"
+      "target_name_defined_in_login_yml"
     ]
   }
 ]
@@ -262,31 +163,26 @@ In `login_targets.json` the following settings would be enough:
 
 ## Development
 
-This application is open-source and can be extended. This repository
-is a mirror of our home owned repository, as a result the pull request
-here can not be directly merged. But pull requests are still welcome. 
-I will extract the patch and add it manually to our internal repo, when
-it is acceptable patch. You still can fork this repository and add your 
-changes too.
+This application is open-source and can be extended. This repository is a mirror of our
+internally-hosted repository, so pull requests cannot be merged directly. Pull requests are
+still welcome — acceptable patches will be applied manually to the internal repo. You are also
+free to fork this repository and maintain your own changes.
 
 ### Build
 
-To build this application you need to install the needed requirements
-first with go get. Dont forget to install chrome and chrome driver
-as it was discussed above.
-
 ```bash
-go get
 go build -o ./login_exporter
 ```
 
-Or if you want to create a binary for several platforms at once, you can
-use the `go_build.sh` script.
+## Docker
 
-## Change Log
+A `Dockerfile` is included. Chrome is bundled in the image so no additional setup is needed.
 
-See the CHANGELOG file.
+```bash
+docker build -t login-exporter .
+docker run --rm -v /path/to/login.yml:/etc/prometheus/login.yml -p 9980:9980 login-exporter
+```
 
 ## License
 
-See the LICENSE file.
+See the [LICENSE](LICENSE) file.
