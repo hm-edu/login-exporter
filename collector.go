@@ -240,13 +240,13 @@ func getStatus(config SingleLoginConfig) LoginStatus {
 		Elapsed:                 loginTime.Sub(start).Seconds(),
 		ElapsedTotal:            stop.Sub(start).Seconds(),
 		ElapsedLoginPageLoad:    pageLoadTime.Sub(start).Seconds(),
-		ElapsedLoginFormVisible: formVisibleTime.Sub(start).Seconds(),
+		ElapsedLoginFormVisible: formVisibleTime.Sub(pageLoadTime).Seconds(),
 	}
 	if config.TotpSeed != "" {
-		result.ElapsedCredentials = credentialTime.Sub(start).Seconds()
+		result.ElapsedCredentials = credentialTime.Sub(formVisibleTime).Seconds()
 		result.ElapsedTotp = loginTime.Sub(credentialTime).Seconds()
 	} else {
-		result.ElapsedCredentials = loginTime.Sub(start).Seconds()
+		result.ElapsedCredentials = loginTime.Sub(formVisibleTime).Seconds()
 		result.ElapsedTotp = -1
 	}
 	logger.WithFields(log.Fields{
