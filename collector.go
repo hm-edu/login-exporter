@@ -85,10 +85,9 @@ func getCommandLineOptions() {
 	flag.StringVar(&listenIp, "listen_ip", "127.0.0.1", "Listen IP Address")
 	flag.IntVar(&listenPort, "listen_port", 9980, "Listen Port")
 
-	flag.StringVar(&logPath, "log_file", "login_exporter.log", "Log file path")
 	flag.StringVar(&logLevel, "log_level", "INFO", "Log level")
 
-	flag.IntVar(&timeout, "timeout", 120, "Timeout in seconds")
+	flag.IntVar(&timeout, "timeout", 60, "Timeout in seconds")
 
 	flag.Parse()
 }
@@ -105,17 +104,47 @@ func getLogger() *log.Logger {
 	return logger
 }
 
-type LoginResult struct {
+// LoginStatus holds the result of a single login probe.
+type LoginStatus struct {
+	Success                 bool
+	Elapsed                 float64
+	ElapsedTotal            float64
+	ElapsedLoginPageLoad    float64
+	ElapsedLoginFormVisible float64
+	ElapsedCredentials      float64
+	ElapsedTotp             float64
+}
+
+// CaptureTime is a chromedp action that records the current time into the
+// provided pointer when the action is executed.
+type CaptureTime struct {
 	time *time.Time
 }
 
-func (l LoginResult) Do(ctx context.Context) error {
-	*l.time = time.Now()
+func (c CaptureTime) Do(ctx context.Context) error {
+	*c.time = time.Now()
+	return nil
+}
+
+// LogAction is a chromedp action that emits a structured log entry at Debug
+// level when the action is executed.
+type LogAction struct {
+	target string
+	part   string
+	msg    string
+}
+
+func (l LogAction) Do(_ context.Context) error {
+	logger.WithFields(log.Fields{
+		"subsystem": "driver",
+		"target":    l.target,
+		"part":      l.part,
+	}).Debug(l.msg)
 	return nil
 }
 
 // getStatus Returns the data from the server
-func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedTotal float64) {
+func getStatus(config SingleLoginConfig) LoginStatus {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.DisableGPU)...)
 	defer cancelAlloc()
 
@@ -129,20 +158,28 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 				"subsystem": "driver",
 				"part":      "warmup",
 			}).Warningln(err.Error())
-		return false, -1, -1
+		return LoginStatus{Success: false, Elapsed: -1, ElapsedTotal: -1, ElapsedLoginPageLoad: -1, ElapsedLoginFormVisible: -1, ElapsedCredentials: -1, ElapsedTotp: -1}
 	}
 
 	ctx, cancelTimeout := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancelTimeout()
 
 	var text string
+	var pageLoadTime time.Time
+	var formVisibleTime time.Time
 	var loginTime time.Time
+	var credentialTime time.Time
 
 	tasks := []chromedp.Action{
+		LogAction{target: config.Target, part: "navigate", msg: "navigating to login URL"},
 		chromedp.Navigate(config.Url),
 		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
+		CaptureTime{time: &pageLoadTime},
+		LogAction{target: config.Target, part: "page_load", msg: "login page loaded"},
 		chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
 		chromedp.WaitVisible(config.SubmitCssClass),
+		CaptureTime{time: &formVisibleTime},
+		LogAction{target: config.Target, part: "form_visible", msg: "login form is visible, submitting credentials"},
 		chromedp.SendKeys(config.UsernameXpath, config.Username),
 		chromedp.SendKeys(config.PasswordXpath, config.Password),
 		chromedp.Click(config.SubmitCssClass),
@@ -151,6 +188,8 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 	if config.TotpSeed != "" {
 		tasks = append(tasks,
 			chromedp.WaitVisible(config.TotpXpath),
+			CaptureTime{time: &credentialTime},
+			LogAction{target: config.Target, part: "totp_prompt", msg: "credentials accepted, TOTP prompt visible"},
 			chromedp.QueryAfter(config.TotpXpath, func(ctx context.Context, execCtx runtime.ExecutionContextID, nodes ...*cdp.Node) error {
 				if len(nodes) < 1 {
 					return fmt.Errorf("selector %q did not return any nodes", config.TotpXpath)
@@ -161,6 +200,7 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 				}
 				return chromedp.KeyEventNode(nodes[0], otp).Do(ctx)
 			}, chromedp.NodeVisible),
+			LogAction{target: config.Target, part: "totp_submit", msg: "submitting TOTP code"},
 			chromedp.Click(config.SubmitCssClass),
 		)
 	}
@@ -168,7 +208,8 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 	tasks = append(tasks,
 		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
 		chromedp.Text(config.ExpectedTextCssClass, &text),
-		LoginResult{time: &loginTime},
+		CaptureTime{time: &loginTime},
+		LogAction{target: config.Target, part: "logged_in", msg: "login successful, navigating to logout URL"},
 		chromedp.Navigate(config.LogoutUrl),
 	)
 
@@ -182,19 +223,44 @@ func getStatus(config SingleLoginConfig) (status bool, elapsed float64, elapsedT
 				"subsystem": "driver",
 				"part":      "navigation_error",
 			}).Warningln(err.Error())
-		return false, -1, -1
+		return LoginStatus{Success: false, Elapsed: -1, ElapsedTotal: -1, ElapsedLoginPageLoad: -1, ElapsedLoginFormVisible: -1, ElapsedCredentials: -1, ElapsedTotp: -1}
 	}
 
-	if strings.Contains(text, config.ExpectedText) {
-		status = true
-		elapsed = loginTime.Sub(start).Seconds()
-		elapsedTotal = stop.Sub(start).Seconds()
+	if !strings.Contains(text, config.ExpectedText) {
+		logger.WithFields(log.Fields{
+			"subsystem": "driver",
+			"target":    config.Target,
+			"part":      "expected_text_check",
+		}).Warningln("expected text not found in page, marking probe as failed")
+		return LoginStatus{Success: false, Elapsed: -1, ElapsedTotal: -1, ElapsedLoginPageLoad: -1, ElapsedLoginFormVisible: -1, ElapsedCredentials: -1, ElapsedTotp: -1}
+	}
+
+	result := LoginStatus{
+		Success:                 true,
+		Elapsed:                 loginTime.Sub(start).Seconds(),
+		ElapsedTotal:            stop.Sub(start).Seconds(),
+		ElapsedLoginPageLoad:    pageLoadTime.Sub(start).Seconds(),
+		ElapsedLoginFormVisible: formVisibleTime.Sub(start).Seconds(),
+	}
+	if config.TotpSeed != "" {
+		result.ElapsedCredentials = credentialTime.Sub(start).Seconds()
+		result.ElapsedTotp = loginTime.Sub(credentialTime).Seconds()
 	} else {
-		elapsed = -1
-		elapsedTotal = -1
+		result.ElapsedCredentials = loginTime.Sub(start).Seconds()
+		result.ElapsedTotp = -1
 	}
-
-	return status, elapsed, elapsedTotal
+	logger.WithFields(log.Fields{
+		"subsystem":           "driver",
+		"target":              config.Target,
+		"part":                "probe_complete",
+		"elapsed_page_load":   result.ElapsedLoginPageLoad,
+		"elapsed_form":        result.ElapsedLoginFormVisible,
+		"elapsed_credentials": result.ElapsedCredentials,
+		"elapsed_totp":        result.ElapsedTotp,
+		"elapsed_login":       result.Elapsed,
+		"elapsed_total":       result.ElapsedTotal,
+	}).Debug("probe completed successfully")
+	return result
 }
 
 func init() {
