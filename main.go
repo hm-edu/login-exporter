@@ -45,9 +45,9 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs map[string]Sin
 	}
 	loginType := targetConfig.LoginType
 	// Get the status and elapsed time for the tests
-	status, elapsed, elapsedTotal := getStatus(targetConfig)
+	result := getStatus(targetConfig)
 	statusValue := 0
-	if status {
+	if result.Success {
 		statusValue = 1
 	}
 	var statusMetric = prometheus.NewGaugeVec(
@@ -71,13 +71,49 @@ func probeHandler(w http.ResponseWriter, r *http.Request, configs map[string]Sin
 		},
 		[]string{"target", "login_type"},
 	)
+	var elapsedPageLoadMetric = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "login_page_load_elapsed_seconds",
+			Help: "Shows how long it took for the login page to load in seconds",
+		},
+		[]string{"target", "login_type"},
+	)
+	var elapsedFormVisibleMetric = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "login_form_visible_elapsed_seconds",
+			Help: "Shows how long it took for the login form to become visible in seconds",
+		},
+		[]string{"target", "login_type"},
+	)
+	var elapsedCredentialsMetric = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "login_credentials_elapsed_seconds",
+			Help: "Shows how long the credential-only login step took in seconds (excludes TOTP verification)",
+		},
+		[]string{"target", "login_type"},
+	)
+	var elapsedTotpMetric = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "login_totp_elapsed_seconds",
+			Help: "Shows how long the TOTP verification step took in seconds (-1 if TOTP is not used)",
+		},
+		[]string{"target", "login_type"},
+	)
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(statusMetric)
 	registry.MustRegister(elapsedMetric)
 	registry.MustRegister(elapsedTotalMetric)
+	registry.MustRegister(elapsedPageLoadMetric)
+	registry.MustRegister(elapsedFormVisibleMetric)
+	registry.MustRegister(elapsedCredentialsMetric)
+	registry.MustRegister(elapsedTotpMetric)
 	statusMetric.WithLabelValues(target, loginType).Set(float64(statusValue))
-	elapsedMetric.WithLabelValues(target, loginType).Set(elapsed)
-	elapsedTotalMetric.WithLabelValues(target, loginType).Set(elapsedTotal)
+	elapsedMetric.WithLabelValues(target, loginType).Set(result.Elapsed)
+	elapsedTotalMetric.WithLabelValues(target, loginType).Set(result.ElapsedTotal)
+	elapsedPageLoadMetric.WithLabelValues(target, loginType).Set(result.ElapsedLoginPageLoad)
+	elapsedFormVisibleMetric.WithLabelValues(target, loginType).Set(result.ElapsedLoginFormVisible)
+	elapsedCredentialsMetric.WithLabelValues(target, loginType).Set(result.ElapsedCredentials)
+	elapsedTotpMetric.WithLabelValues(target, loginType).Set(result.ElapsedTotp)
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)
 }
