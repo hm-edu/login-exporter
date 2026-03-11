@@ -157,7 +157,7 @@ func getStatus(config SingleLoginConfig) LoginStatus {
 			log.Fields{
 				"subsystem": "driver",
 				"part":      "warmup",
-			}).Warningln(err.Error())
+			}).Fatalln(err.Error())
 		return LoginStatus{Success: false, Elapsed: -1, ElapsedTotal: -1, ElapsedLoginPageLoad: -1, ElapsedLoginFormVisible: -1, ElapsedCredentials: -1, ElapsedTotp: -1}
 	}
 
