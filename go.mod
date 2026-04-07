@@ -2,7 +2,7 @@ module github.com/hm-edu/login_exporter
 
 go 1.26
 
-toolchain go1.26.1
+toolchain go1.26.2
 
 require (
 	github.com/chromedp/cdproto v0.0.0-20260405000525-47a8ff65b46a
