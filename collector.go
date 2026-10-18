@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/pquerna/otp/totp"
 	log "github.com/sirupsen/logrus"
@@ -121,9 +119,9 @@ type CaptureTime struct {
 	time *time.Time
 }
 
-func (c CaptureTime) Do(ctx context.Context) error {
+func (c CaptureTime) Do(_ context.Context, _ *chromedp.Target) (chromedp.Void, error) {
 	*c.time = time.Now()
-	return nil
+	return chromedp.Void{}, nil
 }
 
 // LogAction is a chromedp action that emits a structured log entry at Debug
@@ -134,13 +132,13 @@ type LogAction struct {
 	msg    string
 }
 
-func (l LogAction) Do(_ context.Context) error {
+func (l LogAction) Do(_ context.Context, _ *chromedp.Target) (chromedp.Void, error) {
 	logger.WithFields(log.Fields{
 		"subsystem": "driver",
 		"target":    l.target,
 		"part":      l.part,
 	}).Debug(l.msg)
-	return nil
+	return chromedp.Void{}, nil
 }
 
 // getStatus Returns the data from the server
@@ -152,7 +150,7 @@ func getStatus(config SingleLoginConfig) LoginStatus {
 	defer cancelCtx()
 
 	// warmup the browser
-	if err := chromedp.Run(ctx); err != nil {
+	if err := chromedp.Do(ctx); err != nil {
 		logger.WithFields(
 			log.Fields{
 				"subsystem": "driver",
@@ -170,16 +168,16 @@ func getStatus(config SingleLoginConfig) LoginStatus {
 	var loginTime time.Time
 	var credentialTime time.Time
 
-	tasks := []chromedp.Action{
-		LogAction{target: config.Target, part: "navigate", msg: "navigating to login URL"},
+	tasks := []chromedp.Action[chromedp.Void]{
+		LogAction{target: config.Target, part: "navigate", msg: "navigating to login URL"}.Do,
 		chromedp.Navigate(config.Url),
 		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
-		CaptureTime{time: &pageLoadTime},
-		LogAction{target: config.Target, part: "page_load", msg: "login page loaded"},
+		CaptureTime{time: &pageLoadTime}.Do,
+		LogAction{target: config.Target, part: "page_load", msg: "login page loaded"}.Do,
 		chromedp.Click(config.LoginCssClass, chromedp.NodeVisible),
 		chromedp.WaitVisible(config.SubmitCssClass),
-		CaptureTime{time: &formVisibleTime},
-		LogAction{target: config.Target, part: "form_visible", msg: "login form is visible, submitting credentials"},
+		CaptureTime{time: &formVisibleTime}.Do,
+		LogAction{target: config.Target, part: "form_visible", msg: "login form is visible, submitting credentials"}.Do,
 		chromedp.SendKeys(config.UsernameXpath, config.Username),
 		chromedp.SendKeys(config.PasswordXpath, config.Password),
 		chromedp.Click(config.SubmitCssClass),
@@ -188,33 +186,37 @@ func getStatus(config SingleLoginConfig) LoginStatus {
 	if config.TotpSeed != "" {
 		tasks = append(tasks,
 			chromedp.WaitVisible(config.TotpXpath),
-			CaptureTime{time: &credentialTime},
-			LogAction{target: config.Target, part: "totp_prompt", msg: "credentials accepted, TOTP prompt visible"},
-			chromedp.QueryAfter(config.TotpXpath, func(ctx context.Context, execCtx runtime.ExecutionContextID, nodes ...*cdp.Node) error {
+			CaptureTime{time: &credentialTime}.Do,
+			LogAction{target: config.Target, part: "totp_prompt", msg: "credentials accepted, TOTP prompt visible"}.Do,
+			chromedp.QueryAfter(config.TotpXpath, func(ctx context.Context, t *chromedp.Target, nodes []*chromedp.Node) (chromedp.Void, error) {
 				if len(nodes) < 1 {
-					return fmt.Errorf("selector %q did not return any nodes", config.TotpXpath)
+					return chromedp.Void{}, fmt.Errorf("selector %q did not return any nodes", config.TotpXpath)
 				}
 				otp, err := totp.GenerateCode(config.TotpSeed, time.Now())
 				if err != nil {
-					return fmt.Errorf("failed to generate OTP: %v", err)
+					return chromedp.Void{}, fmt.Errorf("failed to generate OTP: %v", err)
 				}
-				return chromedp.KeyEventNode(nodes[0], otp).Do(ctx)
+				return chromedp.KeyEventNode(nodes[0], otp)(ctx, t)
 			}, chromedp.NodeVisible),
-			LogAction{target: config.Target, part: "totp_submit", msg: "submitting TOTP code"},
+			LogAction{target: config.Target, part: "totp_submit", msg: "submitting TOTP code"}.Do,
 			chromedp.Click(config.SubmitCssClass),
 		)
 	}
 
 	tasks = append(tasks,
 		chromedp.WaitVisible(config.ExpectedHeaderCssClass),
-		chromedp.Text(config.ExpectedTextCssClass, &text),
-		CaptureTime{time: &loginTime},
-		LogAction{target: config.Target, part: "logged_in", msg: "login successful, navigating to logout URL"},
+		chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			var err error
+			text, err = chromedp.Text(config.ExpectedTextCssClass)(ctx, t)
+			return err
+		}),
+		CaptureTime{time: &loginTime}.Do,
+		LogAction{target: config.Target, part: "logged_in", msg: "login successful, navigating to logout URL"}.Do,
 		chromedp.Navigate(config.LogoutUrl),
 	)
 
 	start := time.Now()
-	err := chromedp.Run(ctx, tasks...)
+	err := chromedp.Do(ctx, tasks...)
 	stop := time.Now()
 
 	if err != nil {
